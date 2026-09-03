@@ -1,3 +1,20 @@
+// UWAGA — ROZJAZD Z WERSJA WDROZONA (swiadomy)
+//
+// Ten plik trzyma PUSTE wartosci domyslne dla MV_ORCH_TOKEN i MV_SUPABASE_ANON,
+// bo repozytorium mv-www jest PUBLICZNE (hostuje mvautoai.net).
+//
+// Wersja wdrozona w n8n (workflow ol8UAkJNVzPTlnUN) ma w wezle
+// "Plan cyklu i konfiguracja" wpisane realne wartosci jako fallback — te same,
+// ktore i tak sa plaintextem w kilkudziesieciu innych wezlach tej instancji.
+// Dzieki temu automat dziala bez zmiennych srodowiskowych.
+//
+// Zmienne srodowiskowe n8n MAJA PIERWSZENSTWO nad wpisanymi wartosciami.
+// Po ustawieniu MV_SUPABASE_ANON i MV_ORCH_TOKEN w srodowisku n8n mozna
+// wyczyscic fallbacki w wezle. ZALECANA ROTACJA TOKENU p_token.
+//
+// Przy kolejnej edycji: nie nadpisuj wdrozonej wersji tym plikiem bez
+// przywrocenia fallbackow, bo automat sie zatrzyma.
+
 import { workflow, node, trigger, sticky, splitInBatches, nextBatch, ifElse, expr } from '@n8n/workflow-sdk';
 
 const zegar = trigger({
