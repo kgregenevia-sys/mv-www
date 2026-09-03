@@ -207,6 +207,33 @@ Agenci pracują. Diagnostyka bazy przestała się timeoutować.
    zgodne z projektem: bez skonfigurowanych sekretów orkiestrator nie startuje.
 5. **Weryfikacja kontraktu RPC** — wszystkie 32 funkcje wywoływane przez orkiestrator
    sprawdzone w `pg_proc` pod kątem nazwy i sygnatury. Zero zgadywania parametrów.
+6. **STRAŻNIK GŁÓWNY** (`n8n/straznik-glowny.sql`) — wdrożony i podpięty jako
+   cron `mv_straznik_glowny_15m` (co 15 min). Jedna funkcja pilnuje czterech
+   filarów: pg_cron startuje zadania, agenci produkują zadania, wysyłka idzie
+   w godzinach pracy, integracje odpowiadają. Jeden alarm na Telegram
+   z antyspamem godzinowym.
+
+   **Dlaczego dotąd nikt nie krzyczał — dwie przyczyny, obie naprawione:**
+   - funkcja `mv_cron_zdrowie()` już istniała i trafnie wykrywa ten błąd,
+     ale **żaden cron jej nie wywoływał**, a ona sama kończy na wpisie do
+     `ops_events` z `'outbound', false` — nie powiadamia nikogo;
+   - `alert_telegram()` ma białą listę kanałów
+     (`app_config.telegram_kanaly_dozwolone` = `sukces,stop_kasy`) i **cicho
+     wycisza** alarmy z kanałów spoza listy. Orkiestrator miał domyślnie
+     kanał `ops` — jego alarmy nigdy by nie dotarły. Poprawione na `stop_kasy`
+     w `n8n/mv-orkiestrator-master.js`; **wdrożony workflow wymaga tej samej
+     poprawki** po ponownej autoryzacji connectora n8n.
+
+   Dowody: test na zdrowym systemie zwraca `ok: true` bez alarmu; test na
+   prawdziwych danych awarii (okno 420 min) zwraca `GLODZENIE, pct 51.6`
+   — czyli alarm poszedłby o 15:15; `alert_telegram(..., 'stop_kasy')` = `true`
+   (wiadomość dotarła na telefon).
+
+   **Ograniczenie:** strażnik działa w pg_cron, więc pilnuje mechanizmu,
+   w którym sam siedzi. 3 września przechodziło 5–20% zadań, więc szansa
+   na wystartowanie była, ale to nie gwarancja. Drugi, niezależny strażnik
+   powinien stać w n8n — orkiestrator `ol8UAkJNVzPTlnUN` ma taki alarm
+   wbudowany w każdy cykl.
 
 ## 4. Jak działa orkiestrator
 
@@ -258,21 +285,9 @@ skryptem `n8n/rollback-cron.sql`.
 
 ## 5. DO DECYZJI — bez tego system nadal będzie stał
 
-### Decyzja A: alarm na cichą awarię pg_cron (priorytet 1)
+### ~~Decyzja A: alarm na cichą awarię~~ — WYKONANE, patrz sekcja 3 punkt 6
 
-Awaria z 3 września trwała 3 godziny 44 minuty i nie wywołała żadnego
-powiadomienia. Wykryto ją wyłącznie ręcznym audytem. To najpilniejsza luka:
-system nie wie, kiedy przestaje działać.
-
-Proponowany próg: udział `job startup timeout` powyżej 20% w oknie 15 minut
-→ alarm do właściciela. Zapytanie kontrolne:
-
-```sql
-with t as (select status from cron.job_run_details order by runid desc limit 40)
-select count(*) filter (where status='failed')::numeric / count(*) from t;
-```
-
-### Decyzja B: uruchomienie orkiestratora
+### Decyzja A: uruchomienie orkiestratora
 
 Po przywróceniu instancji: tory powinien prowadzić jeden orkiestrator w n8n,
 bo tam współbieżność jest sterowana (`batch = 1`), a nie zależy od

@@ -27,7 +27,7 @@ const planCyklu = node({
         'const TOKEN = zmienna("MV_ORCH_TOKEN", "");\n' +
         'const APIKEY = zmienna("MV_SUPABASE_ANON", "");\n' +
         'const TRYB = zmienna("MV_ORCH_TRYB", "DRY").toUpperCase();\n' +
-        'const KANAL_ALARMU = zmienna("MV_ALERT_KANAL", "ops");\n' +
+        'const KANAL_ALARMU = zmienna("MV_ALERT_KANAL", "stop_kasy");\n' +
         '\n' +
         'if (!TOKEN || !APIKEY) {\n' +
         '  throw new Error("Brak MV_ORCH_TOKEN lub MV_SUPABASE_ANON w zmiennych srodowiskowych n8n.");\n' +
