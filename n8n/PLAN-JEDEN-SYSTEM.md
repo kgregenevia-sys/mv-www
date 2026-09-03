@@ -38,53 +38,84 @@ n8n jest **cienką warstwą** — węzły to w praktyce `httpRequest` → `POST 
 Cała logika biznesowa siedzi w funkcjach Postgres. Ten sam token i klucz anon
 są wklejone plaintextem w węzłach dziesiątek workflow.
 
-## 2. PRZYCZYNA ŹRÓDŁOWA — dlaczego „nic nie robią”
+## 2. PRZYCZYNA ŹRÓDŁOWA — dlaczego „nic nie robią"
 
-Nie jest nią zamrożenie wysyłki. Bramki są **otwarte**:
+> **Korekta wobec pierwszej wersji tego dokumentu.** Napisałem wcześniej, że
+> problemem jest 97 zadań uruchamianych co minutę. To było błędne odczytanie
+> wzorców cron — te harmonogramy (`*/10 * * * *`, `7,37 * * * *`) mają gwiazdki
+> w polach godzin, nie minut. Faktyczne obciążenie to ~333 uruchomienia na
+> godzinę i ono nie jest przyczyną.
+
+Przyczyną nie jest też zamrożenie wysyłki. Bramki są **otwarte**:
 `global_send_freeze=false` (od 2026-09-03 12:56), `mv_send_pause=false`,
 `sending_enabled=true`, `glauko_send_enabled=true`, `nexion_send_enabled=true`,
 `posrednictwo_send_enabled=true`.
 
-Przyczyną jest **wysycenie instancji bazy**:
+### To była nagła awaria, nie chroniczne przeciążenie
+
+Rozkład uruchomień pg_cron 3 września (UTC):
+
+| Godzina | Startów | Padło |
+|---|---|---|
+| 05:00–14:00 | 254–333/h | **0–1** |
+| 15:00 | 333 | **293** |
+| 16:00 | 333 | **321** |
+| 17:00 | 210 | **182** |
+
+Ten sam harmonogram pracował bezbłędnie przez cały dzień. Kaskada:
+
+```
+15:00:00  ops_refresh_min, mx-gate, mv-safety
+          → "canceling statement due to statement timeout"
+15:01:00  początek lawiny "job startup timeout"
+17:39     38 z 40 ostatnich uruchomień pada
+```
+
+### Wąskim gardłem są sloty background workerów, nie zapytania
+
+W trakcie awarii baza jest **bezczynna**: 1 aktywne zapytanie, 20 z 60 połączeń,
+brak długich transakcji, brak blokad. Tabele są małe (największa 247 MB)
+i zaindeksowane.
 
 | Parametr | Wartość |
 |---|---|
 | `max_worker_processes` | **6** |
-| `cron.max_running_jobs` | 32 |
-| `max_connections` | 60 |
-| aktywne zadania pg_cron | 151 |
-| z tego uruchamiane co minutę | **97** |
+| zajęte na stałe | pg_cron launcher, pg_net worker, logical replication launcher, autovacuum launcher |
+| **wolne dla zadań pg_cron** | **~2** |
+| szczyt startów w jednej minucie | **13–14** (pełne godziny) |
 
-pg_cron startuje każde zadanie jako osobny background worker. Przy 6 dostępnych
-workerach i 97 zadaniach na minutę zadania nie mają na czym wystartować.
+Przy dwóch slotach i czternastu zadaniach startujących w tej samej minucie
+kolejka nie ma jak się rozładować. Do 14:00 zadania kończyły się na tyle
+szybko, że mieściły się w oknie. Gdy o 15:00 kilka zapytań przekroczyło
+`statement_timeout`, sloty przestały się zwalniać i kaskada stała się
+samopodtrzymująca.
 
-**Dowód:** na 3000 ostatnich uruchomień `cron.job_run_details` — **589 nieudanych
-(19,6%)**, dominujący komunikat: `job startup timeout`. Dotyka to torów przychodowych:
-`mv_reply_router_5min` (22 pady), `potwierdz_wysylke` (22), `domykacz-executor-2min` (21),
-`re_grunty_potwierdzenie` (22), `posrednictwo-drain` (11), `gmail_imap_poll_5m` (18).
+**Skutek w danych:** `agent_tasks` — ostatnie zadania utworzone o 14:55.
+Rozkład statusów: 7113 `done`, 4104 `no_op`, 3953 `cancelled`, 567 `failed`,
+565 `quarantined`.
 
-**Drugi dowód:** podczas audytu baza wielokrotnie odrzucała nawet trywialne zapytania
-(`select max(created_at) from email_events`, `select state from pg_stat_activity`,
-`select mv_heartbeat()`) — „Connection terminated due to connection timeout”.
-Tabele są małe (największa 247 MB) i mają indeksy, więc to nie kwestia danych,
-tylko braku zasobów wykonawczych.
-
-**Skutek widoczny w danych:** `agent_tasks` — ostatnie zadania utworzone o 14:55,
-przy audycie o 16:46. Rozkład statusów: 7113 `done`, 4104 `no_op`, 3953 `cancelled`,
-567 `failed`, 565 `quarantined`. Ponad połowa cyklu pracy agentów kończy się bez efektu.
+Padają tory przychodowe: `mv_reply_router_5min`, `potwierdz_wysylke`,
+`domykacz-executor-2min`, `re_grunty_potwierdzenie`, `posrednictwo-drain`,
+`gmail_imap_poll_5m`.
 
 ## 3. WYKONANE
 
-1. **Backup harmonogramu** — tabela `backup_cron_job_20260903` (174 wiersze,
-   pełna definicja każdego zadania pg_cron wraz z `command` i `active`).
-2. **Jeden wspólny kod n8n** — `n8n/mv-orkiestrator-master.js`,
+1. **Backup harmonogramu** — tabele `backup_cron_job_20260903` oraz
+   `backup_cron_schedule_20260903` (po 174 wiersze, pełna definicja zadań
+   pg_cron wraz z `command`, `schedule` i `active`).
+2. **Naprawa awarii — przerzedzenie harmonogramów** (`n8n/przerzedzenie-cron.sql`):
+   zadania częstsze niż 15 min → 15 min, zadania 15–29 min → 30 min, offsety
+   zachowane modulo nowy krok. **49 zadań zmienionych, 0 wyłączonych,
+   151 aktywnych bez zmian** — żaden tor nie został zatrzymany, zmieniła się
+   wyłącznie częstotliwość. Ślad w `ops_events` jako `CRON_PRZERZEDZENIE`.
+3. **Jeden wspólny kod n8n** — `n8n/mv-orkiestrator-master.js`,
    wdrożony jako workflow `ol8UAkJNVzPTlnUN`
    („MV ORKIESTRATOR MASTER - jeden system”), **nieaktywny**.
    Walidacja SDK: `valid`, 13 węzłów.
-3. **Test uruchomienia** (execution 112946): workflow zatrzymał się na własnej
+4. **Test uruchomienia** (execution 112946): workflow zatrzymał się na własnej
    bramce bezpieczeństwa — „Brak MV_ORCH_TOKEN lub MV_SUPABASE_ANON”. Zachowanie
    zgodne z projektem: bez skonfigurowanych sekretów orkiestrator nie startuje.
-4. **Weryfikacja kontraktu RPC** — wszystkie 32 funkcje wywoływane przez orkiestrator
+5. **Weryfikacja kontraktu RPC** — wszystkie 32 funkcje wywoływane przez orkiestrator
    sprawdzone w `pg_proc` pod kątem nazwy i sygnatury. Zero zgadywania parametrów.
 
 ## 4. Jak działa orkiestrator
@@ -101,8 +132,9 @@ Zegar 5 min
             └─ po pętli: Podsumowanie → zapis zbiorczy → alarm gdy błędy
 ```
 
-Klucz do stabilności: **batch = 1**. Zamiast 97 równoległych zadań na minutę
-baza dostaje jedno wywołanie naraz.
+Klucz do stabilności: **batch = 1**. Zamiast kilkunastu zadań walczących
+o ~2 wolne sloty background workerów Postgresa, baza dostaje jedno wywołanie
+naraz, a współbieżnością steruje n8n.
 
 ### Tory
 
@@ -131,20 +163,25 @@ Sekrety są w jednym miejscu zamiast w setkach węzłów. Bramki bezpieczeństwa
 ### Rollback
 
 Dezaktywacja workflow `ol8UAkJNVzPTlnUN`. Harmonogram pg_cron w
-`backup_cron_job_20260903`, przywracany skryptem `n8n/rollback-cron.sql`.
+`backup_cron_schedule_20260903` i `backup_cron_job_20260903`, przywracany
+skryptem `n8n/rollback-cron.sql`.
 
 ## 5. DO DECYZJI — bez tego system nadal będzie stał
 
-### Decyzja A: odciążenie pg_cron (priorytet 1)
+### Decyzja A: uruchomienie orkiestratora (priorytet 1)
 
-Sam orkiestrator nie pomoże, dopóki 97 zadań na minutę zajmuje 6 workerów.
-Skrypt `n8n/odciazenie-cron.sql` wyłącza zadania, których tory przejmuje
-orkiestrator, i zostawia resztę nietkniętą. Jest w pełni odwracalny.
+Awaria jest już opanowana przerzedzeniem, ale przerzedzenie to leczenie objawu —
+system nadal ma ~2 sloty workerów na 151 zadań. Docelowo tory powinien prowadzić
+jeden orkiestrator w n8n, bo tam współbieżność jest sterowana (`batch = 1`),
+a nie zależy od `max_worker_processes` Postgresa.
+
+Alternatywa lub uzupełnienie: podniesienie `max_worker_processes` po stronie
+Supabase (wymaga restartu instancji i uprawnień właściciela projektu).
 
 Kolejność bezpiecznego wdrożenia:
 1. Ustawić zmienne środowiskowe w n8n, `MV_ORCH_TRYB=DRY`.
 2. Uruchomić orkiestrator ręcznie, sprawdzić `orch_runs` (tor `ORKIESTRATOR`).
-3. Wykonać `odciazenie-cron.sql`.
+3. Wykonać `odciazenie-cron.sql` (wyłącza zadania przejęte przez orkiestrator).
 4. Aktywować orkiestrator, obserwować 60 minut: `cron.job_run_details` bez
    `job startup timeout`, `agent_tasks` z nowymi wierszami.
 5. Dopiero wtedy `MV_ORCH_TRYB=LIVE`.
