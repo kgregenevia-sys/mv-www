@@ -1,4 +1,17 @@
--- MV — przerzedzenie harmonogramów pg_cron (WYKONANE 2026-09-03 ~17:45 UTC)
+-- MV — przerzedzenie harmonogramów pg_cron (WYKONANE 2026-09-03 17:45 UTC)
+--
+-- !!! WYNIK: TA ZMIANA NIE NAPRAWILA AWARII !!!
+-- Pomiar w oknie 17:52-18:04 (w pelni po zmianie): 38 z 45 uruchomien padlo (84%),
+-- wobec 95% przed zmiana. Zmniejszenie liczby startow o polowe nie pomoglo,
+-- wiec hipoteza "za duzo zadan na ~2 sloty" jest obalona.
+--
+-- WLASCIWA PRZYCZYNA: sloty background workerow sa wyczerpane, a nie zajete.
+-- pg_stat_activity pokazuje ZERO workerow pg_cron (tylko launcher), baze bezczynna
+-- i brak blokad — a mimo to pg_cron nie startuje ani jednego workera.
+-- To objaw wycieku slotow max_worker_processes. Naprawa: RESTART INSTANCJI
+-- (panel Supabase → Settings → General → Restart project). Z poziomu SQL sie nie da.
+--
+-- Zmiane zostawiono w mocy: nie szkodzi, a po restarcie zmniejsza ryzyko nawrotu.
 --
 -- DIAGNOZA
 -- Do 14:00 UTC system pracował bezbłędnie: ~333 uruchomienia/h, 0-1 padów.

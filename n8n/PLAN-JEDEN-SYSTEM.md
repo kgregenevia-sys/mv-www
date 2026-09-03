@@ -98,12 +98,54 @@ Padają tory przychodowe: `mv_reply_router_5min`, `potwierdz_wysylke`,
 `domykacz-executor-2min`, `re_grunty_potwierdzenie`, `posrednictwo-drain`,
 `gmail_imap_poll_5m`.
 
+### Weryfikacja: przerzedzenie NIE naprawiło awarii
+
+Przerzedzenie harmonogramów (49 zadań, ~50% mniej startów) zostało wykonane
+o 17:45 UTC. Pomiar w oknie **17:52–18:04, czyli w pełni po zmianie**:
+
+| Moment | Pady |
+|---|---|
+| przed naprawą (17:39) | 38 z 40 = **95%** |
+| pierwszy pomiar (17:49, próbka 17) | 9 z 17 = 53% |
+| **pomiar rozstrzygający (17:52–18:04)** | **38 z 45 = 84%** |
+
+Pierwszy pomiar był złudzeniem małej próbki. **Zmniejszenie liczby startów
+o połowę nie pomogło — hipoteza „za dużo zadań na ~2 sloty" jest obalona.**
+
+### Właściwa przyczyna: sloty workerów są wyczerpane, a nie zajęte
+
+W trakcie trwającej awarii `pg_stat_activity` pokazuje:
+
+- **zero** background workerów pg_cron (jest tylko `pg_cron launcher`),
+- 10 połączeń klientów, baza bezczynna,
+- brak blokad i długich transakcji.
+
+Mimo to każde zadanie kończy się `job startup timeout` — pg_cron nie jest
+w stanie wystartować **ani jednego** workera, choć nic ich nie zajmuje.
+Równolegle własne zapytania diagnostyczne regularnie kończą się
+„Connection terminated due to connection timeout" — instancja ma problem
+z uruchamianiem nowych procesów i przyjmowaniem nowych połączeń, a nie
+z obciążeniem.
+
+To objaw wycieku slotów `max_worker_processes`: workery zakończyły się
+nieprawidłowo, a sloty nie wróciły do puli. Stan tego typu nie ustępuje sam
+i nie da się go naprawić z poziomu SQL.
+
+**Jedyne skuteczne rozwiązanie: restart instancji Postgres**
+(panel Supabase → Settings → General → Restart project). Wymaga uprawnień
+właściciela projektu — nie jest dostępny przez API tej sesji.
+
+Przerzedzenie zostawiono w mocy: nie szkodzi, a po restarcie zmniejsza ryzyko
+powrotu kaskady. Cofnięcie: `n8n/rollback-cron.sql`.
+
 ## 3. WYKONANE
 
 1. **Backup harmonogramu** — tabele `backup_cron_job_20260903` oraz
    `backup_cron_schedule_20260903` (po 174 wiersze, pełna definicja zadań
    pg_cron wraz z `command`, `schedule` i `active`).
-2. **Naprawa awarii — przerzedzenie harmonogramów** (`n8n/przerzedzenie-cron.sql`):
+2. **Przerzedzenie harmonogramów** (`n8n/przerzedzenie-cron.sql`) — próba naprawy,
+   która NIE usunęła awarii (patrz weryfikacja wyżej), ale jest nieszkodliwa
+   i zostaje w mocy:
    zadania częstsze niż 15 min → 15 min, zadania 15–29 min → 30 min, offsety
    zachowane modulo nowy krok. **49 zadań zmienionych, 0 wyłączonych,
    151 aktywnych bez zmian** — żaden tor nie został zatrzymany, zmieniła się
@@ -168,15 +210,30 @@ skryptem `n8n/rollback-cron.sql`.
 
 ## 5. DO DECYZJI — bez tego system nadal będzie stał
 
-### Decyzja A: uruchomienie orkiestratora (priorytet 1)
+### Decyzja A: RESTART INSTANCJI SUPABASE (priorytet 0, pilne)
 
-Awaria jest już opanowana przerzedzeniem, ale przerzedzenie to leczenie objawu —
-system nadal ma ~2 sloty workerów na 151 zadań. Docelowo tory powinien prowadzić
-jeden orkiestrator w n8n, bo tam współbieżność jest sterowana (`batch = 1`),
-a nie zależy od `max_worker_processes` Postgresa.
+Awaria trwa. Sloty background workerów są wyczerpane w sposób, którego nie da
+się naprawić z poziomu SQL — potwierdzone eksperymentem: zmniejszenie liczby
+startów o połowę nie zmieniło nic (84% padów).
 
-Alternatywa lub uzupełnienie: podniesienie `max_worker_processes` po stronie
-Supabase (wymaga restartu instancji i uprawnień właściciela projektu).
+Panel Supabase → Settings → General → **Restart project**. Wymaga uprawnień
+właściciela projektu. Po restarcie zweryfikować:
+
+```sql
+with t as (select status from cron.job_run_details order by runid desc limit 40)
+select status, count(*) from t group by 1;
+```
+
+Oczekiwane: zero `job startup timeout`.
+
+Przy okazji restartu warto rozważyć podniesienie `max_worker_processes`
+z 6 na 12 — cztery sloty zjadają same launchery systemowe.
+
+### Decyzja B: uruchomienie orkiestratora
+
+Po przywróceniu instancji: tory powinien prowadzić jeden orkiestrator w n8n,
+bo tam współbieżność jest sterowana (`batch = 1`), a nie zależy od
+`max_worker_processes` Postgresa.
 
 Kolejność bezpiecznego wdrożenia:
 1. Ustawić zmienne środowiskowe w n8n, `MV_ORCH_TRYB=DRY`.
@@ -186,13 +243,13 @@ Kolejność bezpiecznego wdrożenia:
    `job startup timeout`, `agent_tasks` z nowymi wierszami.
 5. Dopiero wtedy `MV_ORCH_TRYB=LIVE`.
 
-### Decyzja B: rotacja sekretów
+### Decyzja C: rotacja sekretów
 
 Token `p_token` i klucz anon są plaintextem w węzłach dziesiątek workflow n8n.
 Rekomendacja: rotacja tokenu i przeniesienie do zmiennych środowiskowych
 oraz credentials n8n. Wymaga jednoczesnej aktualizacji funkcji `orch_auth`.
 
-### Decyzja C: wygaszenie zdublowanych workflow
+### Decyzja D: wygaszenie zdublowanych workflow
 
 Po potwierdzeniu, że orkiestrator prowadzi tory, dezaktywować stare ORCH-y:
 `Cl6mJ8gN2UiqVYQA` (Biuro 13 agentów), `u9BBHB7tVOjA4ekr` (Dyspozytor i QA),
@@ -200,7 +257,7 @@ Po potwierdzeniu, że orkiestrator prowadzi tory, dezaktywować stare ORCH-y:
 `e08foCnkk1ys2arn` (MV Content i Watchdog), `LipWSUzbq7zI9aVM` (Glaukogreen Scout),
 `yAY2FzhmttzhKut9` (Publikator Facebook).
 
-### Decyzja D: uspójnienie rejestru agentów
+### Decyzja E: uspójnienie rejestru agentów
 
 Trzy rejestry (`biuro_agenci` 20, `ai_agents` 16, `office_agent_registry` 28)
 opisują tę samą kadrę pod różnymi nazwami. Do wyboru jedno źródło prawdy —
