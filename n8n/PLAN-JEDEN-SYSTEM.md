@@ -131,12 +131,60 @@ To objaw wycieku slotów `max_worker_processes`: workery zakończyły się
 nieprawidłowo, a sloty nie wróciły do puli. Stan tego typu nie ustępuje sam
 i nie da się go naprawić z poziomu SQL.
 
-**Jedyne skuteczne rozwiązanie: restart instancji Postgres**
-(panel Supabase → Settings → General → Restart project). Wymaga uprawnień
-właściciela projektu — nie jest dostępny przez API tej sesji.
+~~Jedyne skuteczne rozwiązanie: restart instancji Postgres.~~
+**Ta teza również okazała się błędna** — patrz sekcja niżej. Awaria ustąpiła
+samoistnie o 18:45, bez restartu.
 
 Przerzedzenie zostawiono w mocy: nie szkodzi, a po restarcie zmniejsza ryzyko
 powrotu kaskady. Cofnięcie: `n8n/rollback-cron.sql`.
+
+### ROZWIĄZANIE: awaria ustąpiła samoistnie o 18:45, bez restartu
+
+| Fakt | Wartość |
+|---|---|
+| ostatnie nieudane uruchomienie | **2026-09-03 18:44:00 UTC** |
+| pierwsze udane po nim | **2026-09-03 18:45:00 UTC** |
+| uruchomień od tego czasu | **119, z czego 0 nieudanych** |
+| godzina 19:00–19:15 | 81 startów, **0 padów** |
+| `pg_postmaster_start_time()` | **2026-07-10 00:21 UTC** |
+
+Instancja działa nieprzerwanie od 10 lipca — **restartu nie było**.
+
+To obala trzecią hipotezę z tego dokumentu (wyciek slotów `max_worker_processes`,
+„stan nie ustępuje sam, konieczny restart"). Stan ustąpił sam po 3 godzinach
+i 44 minutach, bez żadnej ingerencji w instancję.
+
+**Uczciwy wniosek: definitywnej przyczyny nie ustalono.** Przebieg — nagły
+początek, brak korelacji z obciążeniem, brak blokad i długich transakcji,
+brak reakcji na zmniejszenie liczby zadań o połowę, samoistne ustąpienie —
+wskazuje na czynnik przejściowy po stronie platformy Supabase (ograniczenie
+zasobów instancji, throttling lub problem hosta), a nie na konfigurację
+harmonogramu ani na kod.
+
+Przerzedzenie harmonogramów weszło o 17:45, a awaria trwała jeszcze godzinę,
+więc **nie ono ją zakończyło**. Zmniejszyło natomiast zaległą kolejkę: o 18:00
+było 223 startów, o 19:00 już tylko 81 przy zerowej awaryjności.
+
+### Stan po powrocie (2026-09-03 19:15 UTC)
+
+| Wskaźnik | Wartość |
+|---|---|
+| `agent_tasks` — ostatnie zadanie | 19:15:00, czyli na bieżąco |
+| zadania utworzone po 18:30 | 13 |
+| `emails_sent_today()` | **213** (funkcja znów odpowiada) |
+| pady pg_cron | **0** |
+
+Agenci pracują. Diagnostyka bazy przestała się timeoutować.
+
+### Wnioski na przyszłość
+
+1. Awaria tej klasy nie ma sygnalizacji — trwała 3 godziny 44 minuty i nikt
+   by o niej nie wiedział, gdyby nie ręczny audyt. System nie ma alarmu
+   na „pg_cron przestał startować zadania".
+2. Alarm powinien wykrywać udział `job startup timeout` w ostatnich
+   uruchomieniach, np. próg 20% w oknie 15 minut.
+3. Orkiestrator w n8n jest na to odporniejszy: nie zależy od
+   `max_worker_processes`, a jego węzeł alarmowy raportuje każdy nieudany cykl.
 
 ## 3. WYKONANE
 
@@ -210,24 +258,19 @@ skryptem `n8n/rollback-cron.sql`.
 
 ## 5. DO DECYZJI — bez tego system nadal będzie stał
 
-### Decyzja A: RESTART INSTANCJI SUPABASE (priorytet 0, pilne)
+### Decyzja A: alarm na cichą awarię pg_cron (priorytet 1)
 
-Awaria trwa. Sloty background workerów są wyczerpane w sposób, którego nie da
-się naprawić z poziomu SQL — potwierdzone eksperymentem: zmniejszenie liczby
-startów o połowę nie zmieniło nic (84% padów).
+Awaria z 3 września trwała 3 godziny 44 minuty i nie wywołała żadnego
+powiadomienia. Wykryto ją wyłącznie ręcznym audytem. To najpilniejsza luka:
+system nie wie, kiedy przestaje działać.
 
-Panel Supabase → Settings → General → **Restart project**. Wymaga uprawnień
-właściciela projektu. Po restarcie zweryfikować:
+Proponowany próg: udział `job startup timeout` powyżej 20% w oknie 15 minut
+→ alarm do właściciela. Zapytanie kontrolne:
 
 ```sql
 with t as (select status from cron.job_run_details order by runid desc limit 40)
-select status, count(*) from t group by 1;
+select count(*) filter (where status='failed')::numeric / count(*) from t;
 ```
-
-Oczekiwane: zero `job startup timeout`.
-
-Przy okazji restartu warto rozważyć podniesienie `max_worker_processes`
-z 6 na 12 — cztery sloty zjadają same launchery systemowe.
 
 ### Decyzja B: uruchomienie orkiestratora
 

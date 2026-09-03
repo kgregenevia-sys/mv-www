@@ -11,7 +11,16 @@
 -- To objaw wycieku slotow max_worker_processes. Naprawa: RESTART INSTANCJI
 -- (panel Supabase → Settings → General → Restart project). Z poziomu SQL sie nie da.
 --
--- Zmiane zostawiono w mocy: nie szkodzi, a po restarcie zmniejsza ryzyko nawrotu.
+-- EPILOG (19:15 UTC): awaria ustapila SAMOISTNIE o 18:45, BEZ restartu instancji.
+-- pg_postmaster_start_time() = 2026-07-10 — instancja dziala nieprzerwanie.
+-- Ostatni pad 18:44:00, pierwszy sukces 18:45:00, potem 119 uruchomien i 0 padow.
+-- Teza o wycieku slotow wymagajacym restartu tez okazala sie bledna.
+-- Definitywnej przyczyny nie ustalono; przebieg wskazuje na czynnik przejsciowy
+-- po stronie platformy Supabase, nie na harmonogram ani kod.
+--
+-- Przerzedzenie weszlo o 17:45, awaria trwala jeszcze godzine — wiec nie ono ja
+-- zakonczylo. Zmniejszylo natomiast zalegla kolejke: o 18:00 bylo 223 startow,
+-- o 19:00 juz 81 przy zerowej awaryjnosci. Zmiane zostawiono w mocy.
 --
 -- DIAGNOZA
 -- Do 14:00 UTC system pracował bezbłędnie: ~333 uruchomienia/h, 0-1 padów.
