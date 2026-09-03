@@ -27,7 +27,6 @@ const planCyklu = node({
         'const TOKEN = zmienna("MV_ORCH_TOKEN", "");\n' +
         'const APIKEY = zmienna("MV_SUPABASE_ANON", "");\n' +
         'const TRYB = zmienna("MV_ORCH_TRYB", "DRY").toUpperCase();\n' +
-        'const KANAL_ALARMU = zmienna("MV_ALERT_KANAL", "stop_kasy");\n' +
         '\n' +
         'if (!TOKEN || !APIKEY) {\n' +
         '  throw new Error("Brak MV_ORCH_TOKEN lub MV_SUPABASE_ANON w zmiennych srodowiskowych n8n.");\n' +
@@ -40,9 +39,7 @@ const planCyklu = node({
         '  { tor: "BIURO", rpc: "orch_tick", cadence: 5, klasa: "sterowanie", body: { p_token: TOKEN } },\n' +
         '  { tor: "BIURO", rpc: "mv_dyspozytor_tick", cadence: 5, klasa: "sterowanie", body: { p_limit: 25 } },\n' +
         '  { tor: "BIURO", rpc: "orch_qa_tick", cadence: 10, klasa: "sterowanie", body: { p_token: TOKEN, p_limit: 50 } },\n' +
-        '  { tor: "ZDROWIE", rpc: "mv_heartbeat", cadence: 5, klasa: "zdrowie", body: {} },\n' +
-        '  { tor: "ZDROWIE", rpc: "mv_guard_tick", cadence: 15, klasa: "zdrowie", body: {} },\n' +
-        '  { tor: "ZDROWIE", rpc: "mv_stuck_watchdog", cadence: 30, klasa: "zdrowie", body: {} },\n' +
+        '  { tor: "ZDROWIE", rpc: "mv_straznik_glowny", cadence: 15, klasa: "zdrowie", body: { p_alarmuj: true } },\n' +
         '  { tor: "ZDROWIE", rpc: "system_watchdog", cadence: 30, klasa: "zdrowie", body: {} },\n' +
         '  { tor: "ZDROWIE", rpc: "orch_watchdog", cadence: 30, klasa: "zdrowie", body: { p_token: TOKEN } },\n' +
         '  { tor: "REPLY", rpc: "mv_reply_klasyfikuj", cadence: 10, klasa: "sterowanie", body: { p_token: TOKEN, p_limit: 200 } },\n' +
@@ -55,17 +52,13 @@ const planCyklu = node({
         '  { tor: "POSREDNICTWO", rpc: "posrednictwo_refill_kolejka", cadence: 60, klasa: "leady", body: { p_max: 200 } },\n' +
         '  { tor: "TRESCI_MV", rpc: "mv_publikator_generuj", cadence: 120, klasa: "tresci", body: { p_token: TOKEN, p_ile: 3 } },\n' +
         '  { tor: "TRESCI_AUREU", rpc: "aureu_content_tick", cadence: 120, klasa: "tresci", body: { p_token: TOKEN, p_ile: 3 } },\n' +
-        '  { tor: "TRESCI_PK", rpc: "kp_oferta_tick", cadence: 120, klasa: "tresci", body: {} },\n' +
-        '  { tor: "SOCIAL_AUREU", rpc: "mv_aureu_publish_tick", cadence: 30, klasa: "publikacja", body: {} },\n' +
-        '  { tor: "SOCIAL_PK", rpc: "kp_ig_tick", cadence: 60, klasa: "publikacja", body: {} },\n' +
         '  { tor: "PRZYCHOD", rpc: "revenue_controller", cadence: 240, klasa: "zdrowie", body: { p_days: 7 } },\n' +
         '  { tor: "WYSYLKA_MV", rpc: "mv_wyslij_partie", cadence: 15, klasa: "wysylka", body: { p_token: TOKEN, p_limit: 50 } },\n' +
         '  { tor: "WYSYLKA_GLAUKO", rpc: "glauko_wyslij_partie", cadence: 20, klasa: "wysylka", body: { p_token: TOKEN, p_limit: 25 } },\n' +
         '  { tor: "WYSYLKA_GLAUKO", rpc: "glauko_followup_tick", cadence: 60, klasa: "wysylka", body: { p_token: TOKEN, p_limit: 25 } },\n' +
         '  { tor: "WYSYLKA_NEXION", rpc: "nexion_wyslij_partie", cadence: 60, klasa: "wysylka", body: { p_token: TOKEN, p_limit: 5 } },\n' +
         '  { tor: "WYSYLKA_ZIEMIA", rpc: "re_wyslij_partie", cadence: 60, klasa: "wysylka", body: { p_token: TOKEN, p_limit: 20 } },\n' +
-        '  { tor: "WYSYLKA_POSREDNICTWO", rpc: "posrednictwo_drain_safe", cadence: 30, klasa: "wysylka", body: { p_batch: 25 } },\n' +
-        '  { tor: "WYSYLKA_PK", rpc: "kp_send_due", cadence: 30, klasa: "wysylka", body: {} }\n' +
+        '  { tor: "WYSYLKA_POSREDNICTWO", rpc: "posrednictwo_drain_safe", cadence: 30, klasa: "wysylka", body: { p_batch: 25 } }\n' +
         '];\n' +
         '\n' +
         'const WAGA = { sterowanie: 1, zdrowie: 2, leady: 3, tresci: 4, publikacja: 5, wysylka: 6 };\n' +
@@ -78,11 +71,10 @@ const planCyklu = node({
         '\n' +
         'const WSPOLNE = {\n' +
         '  tryb: TRYB,\n' +
-        '  kanal_alarmu: KANAL_ALARMU,\n' +
         '  naglowki: NAGLOWKI,\n' +
         '  token: TOKEN,\n' +
         '  url_log: BAZA + "orch_log_run",\n' +
-        '  url_alarm: BAZA + "alert_telegram"\n' +
+        '  url_alarm: BAZA + "mv_orch_alarm"\n' +
         '};\n' +
         '\n' +
         'if (doWykonania.length === 0) {\n' +
@@ -105,7 +97,7 @@ const planCyklu = node({
     },
     position: [220, 0]
   },
-  output: [{ pusty_cykl: false, tor: 'BIURO', rpc: 'mv_biuro_tick', klasa: 'sterowanie', cadence: 5, tryb: 'DRY', kanal_alarmu: 'ops', url: 'https://przyklad.supabase.co/rest/v1/rpc/mv_biuro_tick', url_log: 'https://przyklad.supabase.co/rest/v1/rpc/orch_log_run', url_alarm: 'https://przyklad.supabase.co/rest/v1/rpc/alert_telegram', naglowki: { 'Content-Type': 'application/json' }, token: 'ukryty', body: { p_token: 'ukryty' } }]
+  output: [{ pusty_cykl: false, tor: 'BIURO', rpc: 'mv_biuro_tick', klasa: 'sterowanie', cadence: 5, tryb: 'DRY', url: 'https://przyklad.supabase.co/rest/v1/rpc/mv_biuro_tick', url_log: 'https://przyklad.supabase.co/rest/v1/rpc/orch_log_run', url_alarm: 'https://przyklad.supabase.co/rest/v1/rpc/mv_orch_alarm', naglowki: { 'Content-Type': 'application/json' }, token: 'ukryty', body: { p_token: 'ukryty' } }]
 });
 
 const czyJestCoRobic = ifElse({
@@ -183,7 +175,6 @@ const ocenaWyniku = node({
         '    rpc: zadanie.rpc,\n' +
         '    klasa: zadanie.klasa,\n' +
         '    tryb: zadanie.tryb,\n' +
-        '    kanal_alarmu: zadanie.kanal_alarmu,\n' +
         '    kod: kod,\n' +
         '    sukces: sukces,\n' +
         '    blad: blad,\n' +
@@ -197,7 +188,7 @@ const ocenaWyniku = node({
     },
     position: [1100, 120]
   },
-  output: [{ tor: 'BIURO', rpc: 'mv_biuro_tick', klasa: 'sterowanie', tryb: 'DRY', kanal_alarmu: 'ops', kod: 200, sukces: true, blad: null, wynik: { ok: true }, token: 'ukryty', naglowki: { 'Content-Type': 'application/json' }, url_log: 'https://przyklad.supabase.co/rest/v1/rpc/orch_log_run', url_alarm: 'https://przyklad.supabase.co/rest/v1/rpc/alert_telegram' }]
+  output: [{ tor: 'BIURO', rpc: 'mv_biuro_tick', klasa: 'sterowanie', tryb: 'DRY', kod: 200, sukces: true, blad: null, wynik: { ok: true }, token: 'ukryty', naglowki: { 'Content-Type': 'application/json' }, url_log: 'https://przyklad.supabase.co/rest/v1/rpc/orch_log_run', url_alarm: 'https://przyklad.supabase.co/rest/v1/rpc/mv_orch_alarm' }]
 });
 
 const zapiszLog = node({
@@ -247,7 +238,6 @@ const podsumowanie = node({
         '    wykonano: oceny.length,\n' +
         '    bledow: bledy.length,\n' +
         '    tryb: kontekst.tryb,\n' +
-        '    kanal_alarmu: kontekst.kanal_alarmu,\n' +
         '    tekst_alarmu: "MV ORKIESTRATOR: " + bledy.length + " z " + oceny.length + " torow z bledem. " + opis.slice(0, 900),\n' +
         '    token: kontekst.token,\n' +
         '    naglowki: kontekst.naglowki,\n' +
@@ -263,7 +253,7 @@ const podsumowanie = node({
     },
     position: [880, -140]
   },
-  output: [{ wykonano: 6, bledow: 0, tryb: 'DRY', kanal_alarmu: 'ops', tekst_alarmu: 'MV ORKIESTRATOR: 0 z 6 torow z bledem.', token: 'ukryty', naglowki: { 'Content-Type': 'application/json' }, url_log: 'https://przyklad.supabase.co/rest/v1/rpc/orch_log_run', url_alarm: 'https://przyklad.supabase.co/rest/v1/rpc/alert_telegram', wynik_zbiorczy: { wykonano: 6, bledow: 0, tory: [] } }]
+  output: [{ wykonano: 6, bledow: 0, tryb: 'DRY', tekst_alarmu: '0 z 6 torow z bledem.', token: 'ukryty', naglowki: { 'Content-Type': 'application/json' }, url_log: 'https://przyklad.supabase.co/rest/v1/rpc/orch_log_run', url_alarm: 'https://przyklad.supabase.co/rest/v1/rpc/mv_orch_alarm', wynik_zbiorczy: { wykonano: 6, bledow: 0, tory: [] } }]
 });
 
 const zapiszPodsumowanie = node({
@@ -326,7 +316,7 @@ const alarmWlasciciel = node({
       sendBody: true,
       contentType: 'json',
       specifyBody: 'json',
-      jsonBody: expr('{{ JSON.stringify({ p_text: $("Podsumowanie cyklu").first().json.tekst_alarmu, p_kanal: $("Podsumowanie cyklu").first().json.kanal_alarmu }) }}'),
+      jsonBody: expr('{{ JSON.stringify({ p_text: $("Podsumowanie cyklu").first().json.tekst_alarmu }) }}'),
       options: {
         response: { response: { neverError: true } },
         timeout: 20000
@@ -345,7 +335,13 @@ const notatkaGlowna = sticky(
   'dzieki czemu baza nie dostaje kilkudziesieciu rownoleglych wywolan na minute.\n\n' +
   'ZMIENNE SRODOWISKOWE n8n (wymagane - bez nich workflow celowo przerywa):\n' +
   'MV_SUPABASE_URL (opcjonalna), MV_SUPABASE_ANON, MV_ORCH_TOKEN,\n' +
-  'MV_ORCH_TRYB (DRY albo LIVE), MV_ALERT_KANAL.\n\n' +
+  'MV_ORCH_TRYB (DRY albo LIVE).\n\n' +
+  'UPRAWNIENIA: router zawiera WYLACZNIE funkcje wywolywalne przez role anon.\n' +
+  'Funkcje bez grantu dla anon (mv_heartbeat, mv_guard_tick, mv_stuck_watchdog,\n' +
+  'mv_aureu_publish_tick, kp_oferta_tick, kp_send_due) zostaja przy pg_cron -\n' +
+  'dodanie ich tutaj dawaloby 404 na kazdym cyklu.\n\n' +
+  'ALARM: idzie przez mv_orch_alarm (waska bramka SECURITY DEFINER z grantem\n' +
+  'dla anon), a nie przez alert_telegram, ktora dla anon jest zamknieta.\n\n' +
   'TRYB DRY: tylko sterowanie, zdrowie, leady i tresci - zero wysylek.\n' +
   'TRYB LIVE: dodatkowo tory wysylkowe MV, GLAUKO, NEXION, ZIEMIA, POSREDNICTWO, PURPUROWY KOD.\n' +
   'Bramki bezpieczenstwa wysylki pozostaja po stronie RPC (hard_stop, capy, freeze).\n\n' +
@@ -359,7 +355,9 @@ const notatkaPetla = sticky(
   '## Petla torow z pelnym logiem\n\n' +
   'Kazdy tor: wywolanie RPC (3 proby, 45 s timeout, blad nie zabija cyklu)\n' +
   'nastepnie ocena kodu HTTP i zapis do orch_runs przez orch_log_run.\n' +
-  'Po petli: podsumowanie zbiorcze i alarm, gdy cokolwiek padlo.',
+  'Po petli: podsumowanie zbiorcze i alarm, gdy cokolwiek padlo.\n\n' +
+  'Tor ZDROWIE zawiera mv_straznik_glowny - straznika czterech filarow\n' +
+  '(pg_cron, agenci, wysylka, integracje) z wlasnym alarmem na Telegram.',
   [kolejkaTorow, wywolajRpc, ocenaWyniku, zapiszLog],
   { color: 3 }
 );
