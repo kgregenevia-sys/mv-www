@@ -307,13 +307,40 @@ Token `p_token` i klucz anon są plaintextem w węzłach dziesiątek workflow n8
 Rekomendacja: rotacja tokenu i przeniesienie do zmiennych środowiskowych
 oraz credentials n8n. Wymaga jednoczesnej aktualizacji funkcji `orch_auth`.
 
-### Decyzja D: wygaszenie zdublowanych workflow
+### ~~Decyzja D: wygaszenie zdublowanych workflow~~ — ROZSTRZYGNIĘTE 2026-09-04
 
-Po potwierdzeniu, że orkiestrator prowadzi tory, dezaktywować stare ORCH-y:
-`Cl6mJ8gN2UiqVYQA` (Biuro 13 agentów), `u9BBHB7tVOjA4ekr` (Dyspozytor i QA),
-`gKs0jxqPoQ8Qhfj2` (NEXION Growth), `8H9YVqYelS6ZPQoW` (AUREU Curator),
-`e08foCnkk1ys2arn` (MV Content i Watchdog), `LipWSUzbq7zI9aVM` (Glaukogreen Scout),
-`yAY2FzhmttzhKut9` (Publikator Facebook).
+**Korekta.** Wskazałem wcześniej siedem workflow do wygaszenia, sugerując się
+nazwami. Sprawdzenie, co faktycznie wołają (mapa `workflow_id` → `faza`
+z `orch_runs` plus opisy), pokazało, że **dubletami są tylko dwa**:
+
+| Workflow | Werdykt |
+|---|---|
+| `Cl6mJ8gN2UiqVYQA` Biuro 13 agentów | **WYGASZONY** — wołał `mv_biuro_tick`, `orch_tick`, `mv_reply_klasyfikuj`, `mv_domena_ramp`, wszystkie w routerze |
+| `u9BBHB7tVOjA4ekr` Dyspozytor i QA | **WYGASZONY** — wołał `orch_tick` i `orch_qa_tick`, oba w routerze |
+| `gKs0jxqPoQ8Qhfj2` NEXION Growth | zostaje — crawluje strony firm i woła `nexion_kontakt`, router tego nie ma |
+| `8H9YVqYelS6ZPQoW` AUREU Curator | zostaje — sprawdza żywotność linków przez HTTP |
+| `LipWSUzbq7zI9aVM` Glaukogreen Scout | zostaje — crawluje feedy RDOŚ/GDOŚ/BIP |
+| `e08foCnkk1ys2arn` MV Content | zostaje — woła `mv_content_tick`, router ma tylko `mv_publikator_generuj` |
+| `yAY2FzhmttzhKut9` Publikator Facebook | zostaje — publikuje przez Graph API |
+
+**Wniosek architektoniczny:** orkiestrator dobrze zastępuje warstwę sterowania
+(wywołania RPC), ale nie zastąpi workflow, które robią operacje HTTP na zewnątrz
+bazy — crawling, Graph API, sprawdzanie linków. To zostaje w osobnych workflow.
+
+### Decyzja F: czy przełączać na LIVE — REKOMENDACJA: NIE
+
+Wysyłka **już działa** przez wyspecjalizowane workflow:
+
+- `5WllaoICYtAI5z2P` MV Cold Email Daily v2 — to on wysłał 335 maili 3 września
+- `n2WQAb6rkw7l2M7j` GLAUKO Cold Outreach — woła `glauko_wyslij_partie` co godzinę
+
+Router orkiestratora w trybie LIVE wołałby **te same RPC** (`mv_wyslij_partie`,
+`glauko_wyslij_partie`) równolegle. Ryzyko podwójnej wysyłki do tych samych osób.
+
+Rekomendacja: **orkiestrator zostaje w DRY na stałe** jako warstwa sterowania,
+zdrowia i pozyskiwania leadów. Wysyłkę prowadzą dedykowane workflow, które mają
+własne okna czasowe i capy. Przejście na LIVE wymagałoby najpierw wygaszenia
+tych dwóch — i nie daje żadnego zysku, bo logika i tak siedzi w RPC.
 
 ### Decyzja E: uspójnienie rejestru agentów
 
