@@ -1,3 +1,21 @@
+-- !!! WYCOFANE 2026-09-04 07:40 UTC — DIAGNOZA BYLA BLEDNA !!!
+--
+-- Ten mechanizm dlawil tabele orch_zadania, zeby skrocic czas orch_tick.
+-- Blad w rozumowaniu: orch_tick W OGOLE NIE CZYTA tabeli orch_zadania.
+-- Kroplowka nie mogla pomoc i nie pomogla — spadek czasu przy progu 25 vs 10
+-- (14,0 s -> 10,2 s) pochodzil z szumu pomiarowego, nie ze zmiany progu.
+--
+-- STAN: cron mv_kolejka_kroplowka_10m wyrejestrowany, 207 terminow
+-- next_attempt_at przywroconych z backup_orch_zadania_retry_20260904.
+-- Funkcja mv_kolejka_kroplowka pozostaje w bazie, ale nic jej nie wola.
+--
+-- WLASCIWA PRZYCZYNA I NAPRAWA: n8n/orch-tick-profil-i-naprawa.sql
+-- (lux_cobroker_biuro_tick zjadal 9,40 s z 9,9 s calego orch_tick;
+--  po wyjeciu go z goracej sciezki tick trwa 0,54 s przy 208 zadaniach
+--  dojrzalych w kolejce — czyli kolejka nigdy nie byla waskim gardlem)
+--
+-- Plik zostawiony jako zapis sladu diagnostycznego. NIE URUCHAMIAC.
+--
 -- MV — kroplówka kolejki orch_zadania (WDROŻONE 2026-09-04 06:26 UTC)
 --
 -- DLACZEGO JEDNORAZOWE ROZŁOŻENIE NIE WYSTARCZYŁO
