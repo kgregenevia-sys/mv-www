@@ -14,6 +14,14 @@
 //
 // Przy kolejnej edycji: nie nadpisuj wdrozonej wersji tym plikiem bez
 // przywrocenia fallbackow, bo automat sie zatrzyma.
+//
+// TOKEN (2026-09-04): wdrozona wersja uzywa AKTUALNEGO app_config.orch_token
+// (rotacja z 2026-08-28), a nie starego orch_token_prev / orch_token_service.
+// Rotacja z sierpnia byla niedokonczona: wygenerowano nowy token, ale nie
+// przelaczono workflow, wiec stary musial przezyc pod dwoma innymi kluczami.
+// orch_auth() akceptuje wszystkie trzy. Orkiestrator jest pierwszym workflow
+// przelaczonym na nowy. Po przelaczeniu reszty mozna usunac orch_token_prev
+// i orch_token_service z app_config i domknac rotacje.
 
 import { workflow, node, trigger, sticky, splitInBatches, nextBatch, ifElse, expr } from '@n8n/workflow-sdk';
 
