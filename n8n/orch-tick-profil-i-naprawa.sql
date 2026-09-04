@@ -48,6 +48,31 @@
 --   przy czym w kolejce leżało 208 dojrzałych zadań — czyli kolejka nigdy nie
 --   była wąskim gardłem.
 --
+-- POTWIERDZENIE Z PRODUKCJI (pomiar 08:47 UTC, godzina po wdrożeniu)
+--   godzina UTC   cykli   błędów 57014
+--   04:00           50      7  (14,0%)   <- przed
+--   05:00           50      6  (12,0%)   <- przed
+--   06:00           50      8  (16,0%)   <- przed
+--   07:00           50      5  (10,0%)   <- przed (zmiana o 07:46)
+--   08:00           40      0  ( 0,0%)   <- po
+--   Łącznie od 07:47: 49 cykli, 0 błędów.
+--   Cron lux_cobroker_1h wystartował 08:18:00, status succeeded.
+--
+-- ZNALEZIONE PRZY OKAZJI (osobny problem, nie dotyczy orch_tick)
+-- Strażnik główny zgłasza filar 4: 23 błędy HTTP w ostatniej godzinie.
+-- Rozbicie: 546 WORKER_RESOURCE_LIMIT dokładnie o :15 i :45 — czyli
+-- re_skaner_tick() -> edge function 're-skaner', cron re_skaner_10m
+-- ('0-59/15'), 4 pady na godzinę. Tabela re_listings ma 0 wierszy.
+-- Do tego 401 Unauthorized (strona błędu Google) ok. 3x/h przy zadaniach
+-- '1-59/15' — wygasły token OAuth Gmaila.
+--
+-- Osobno: mv_watchdog_http_10min mimo nazwy chodzi RAZ NA GODZINĘ ('54 * * * *'),
+-- a konserwator_http kasuje net._http_response starsze niż 20 minut co 30 minut.
+-- Watchdog widzi więc tylko ~20-minutową próbkę na godzinę i stempluje wszystkie
+-- wpisy czasem partii, nie czasem błędu. Filar 4 strażnika liczy zatem
+-- "błędy w ostatniej godzinie" na podstawie jednej próbki — zaniża i przekłamuje
+-- moment wystąpienia. Do decyzji, bo zmiana częstotliwości zwiększy liczbę alarmów.
+--
 -- BACKUP I ROLLBACK
 --   backup: app_config.backup_orch_tick_def_20260904 (pełna oryginalna definicja)
 --   rollback:
