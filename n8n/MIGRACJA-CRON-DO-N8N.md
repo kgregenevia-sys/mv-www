@@ -164,3 +164,50 @@ crontabów, orkiestrator 23 tory.
 ## Rollback
 
 `unpublish_workflow ol8UAkJNVzPTlnUN`
+
+---
+
+# Poprawka: pollery płatności miały własne klucze (2026-09-06 23:05 UTC)
+
+## Błąd, który wprowadziłem
+
+Przenosząc wywołania edge functions do wrapperów skopiowałem **same adresy URL**,
+pomijając nagłówki i body z oryginalnych crontabów. Efekt w `ops_http_failures`
+po pierwszym przebiegu kadencji godzinowej o 22:49:
+
+```
+403  {"ok":false,"error":"bad_key"}      × 3
+403  {"ok":false,"error":"forbidden"}    × 2
+401  {"ok":false,"err":"unauthorized"}   × 1
+```
+
+Oryginały przekazywały klucze, których moja wersja nie miała:
+
+| edge function | czego wymaga |
+|---|---|
+| `mv-stripe-poll`, `nx-stripe-poll`, `aureu-ads-straznik` | `body.k` = `app_config.office_key` |
+| `domykacz-executor` | nagłówek `x-exec-key` = `app_config.domykacz_exec_secret` |
+| `stripe-poll` | nic — sam `Content-Type`, żadnego klucza |
+| `gmail-imap-poll` | klucz w query stringu `?k=…` |
+
+Dorzucenie nagłówków `apikey`/`Authorization` z klucza `anon` też szkodziło —
+te funkcje ich nie oczekują.
+
+## Naprawa i dowód
+
+Nagłówki i body odtworzone **1:1** z `backup_wygaszenie_20260904`. Test bezpośredni:
+
+| request | edge function | wynik |
+|---|---|---|
+| 242190 | `stripe-poll` | **200** `{"ok":true,"checked":0,"inserted":0}` |
+| 242191 | `mv-stripe-poll` | **200** `{"ok":true,"mapowanie_linkow":135}` |
+| 242192 | `nx-stripe-poll` | **200** `{"ok":true,"payment_links_seen":100,"nexion_links_mapped":6}` |
+
+Wykrywanie płatności realnie wróciło: 135 zmapowanych linków płatniczych MV
+i 6 linków Nexion.
+
+## Wniosek na przyszłość
+
+Przy przenoszeniu crontabu do wrappera trzeba skopiować **całe wywołanie** —
+URL, nagłówki, body i timeout — a nie sam adres. `backup_wygaszenie_20260904`
+trzyma pełne komendy i jest jedynym źródłem prawdy o tym, czego dana funkcja wymaga.
