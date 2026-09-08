@@ -1,9 +1,13 @@
 // MV GLAUKO — caly tor GLAUKO w jednym workflow n8n.
 //
-// ZASTEPUJE trzy zadania pg_cron (patrz app_config.plan_migracji_do_n8n):
+// ZASTEPUJE dwa zadania pg_cron (patrz app_config.plan_migracji_do_n8n):
 //   glauko_watchdog_15min      -> tor WATCHDOG
-//   mv_glauko_pryw_30min       -> tor NADAJNIK
 //   mv_skalper_glauko_10min    -> tor SKALPER
+//
+// NADAJNIKA TU NIE MA I NIE MOZE BYC. Wysylke GLAUKO prowadzi n8n_tick_wysylka()
+// w workflow TICKI (D3tvXbjxvMDXdLRx), pod blokada wspolbieznosci 778811.
+// Zadanie pg_cron mv_glauko_pryw_30min jest DUBLEM tamtej wysylki i to jego
+// nalezy wylaczyc — nie przenosic tutaj.
 //
 // Jeden zegar co 5 minut decyduje, ktore tory sa wymagalne w danej minucie.
 // Wykonanie SEKWENCYJNE (batch = 1) — baza nie dostaje rownoleglych wywolan.
@@ -17,8 +21,9 @@
 //   2. sprawdzic jeden przebieg recznie (execute_workflow)
 //   3. DOPIERO POTEM wylaczyc trzy zadania pg_cron:
 //      select cron.unschedule('glauko_watchdog_15min');
-//      select cron.unschedule('mv_glauko_pryw_30min');
 //      select cron.unschedule('mv_skalper_glauko_10min');
+//   Osobno, niezaleznie od tego workflow, do wylaczenia jako dubel wysylki:
+//      select cron.unschedule('mv_glauko_pryw_30min');
 //   4. publish_workflow
 //
 // ROLLBACK: dezaktywuj ten workflow i przywroc trzy zadania pg_cron
@@ -63,10 +68,6 @@ const planCyklu = node({
         'const NAGLOWKI = { apikey: APIKEY, Authorization: "Bearer " + APIKEY, "Content-Type": "application/json" };\n' +
         'const teraz  = new Date();\n' +
         'const minuta = teraz.getUTCMinutes();\n' +
-        'const godzina= teraz.getUTCHours();\n' +
-        '\n' +
-        '// Okno wysylkowe 6-16 UTC = 8-18 czasu polskiego. Poza nim nadajnik milczy.\n' +
-        'const oknoWysylki = godzina >= 6 && godzina <= 16;\n' +
         '\n' +
         'const tory = [];\n' +
         '\n' +
@@ -91,16 +92,11 @@ const planCyklu = node({
         '  });\n' +
         '}\n' +
         '\n' +
-        '// NADAJNIK — co 30 minut w oknie wysylkowym. Bramki (hard_stop, capy,\n' +
-        '// suppression, outbound_allowed) zostaja po stronie RPC — nie omijamy ich tutaj.\n' +
-        'if (minuta % 30 === 0 && oknoWysylki) {\n' +
-        '  tory.push({\n' +
-        '    tor: "NADAJNIK",\n' +
-        '    metoda: "POST",\n' +
-        '    url: BAZA + "/rest/v1/rpc/glauko_pryw_wyslij",\n' +
-        '    body: { p_limit: 5 }\n' +
-        '  });\n' +
-        '}\n' +
+        '// NADAJNIK — CELOWO GO TU NIE MA.\n' +
+        '// Wysylke GLAUKO prowadzi juz n8n_tick_wysylka(), ktora wola glauko_pryw_wyslij(5),\n' +
+        '// glauko_wyslij_partie(8) i glauko_followup_tick(5) pod jedna blokada wspolbieznosci\n' +
+        '// (pg_try_advisory_lock 778811). Dodanie nadajnika tutaj daloby DRUGI, niezalezny\n' +
+        '// tor wysylki poza ta blokada = podwojna oferta do tego samego klienta.\n' +
         '\n' +
         'return tory.map(function (t) {\n' +
         '  return { json: Object.assign({}, t, { naglowki: NAGLOWKI, url_zdarzenie: BAZA + "/rest/v1/ops_events" }) };\n' +
@@ -226,14 +222,16 @@ const zapiszLog = node({
 
 const notatka = sticky(
   '## MV GLAUKO — caly tor w n8n\n\n' +
-  'Zastepuje trzy zadania pg_cron: glauko_watchdog_15min, mv_glauko_pryw_30min,\n' +
-  'mv_skalper_glauko_10min. Jeden zegar co 5 minut, wykonanie sekwencyjne.\n\n' +
+  'Zastepuje dwa zadania pg_cron: glauko_watchdog_15min i mv_skalper_glauko_10min.\n' +
+  'Jeden zegar co 5 minut, wykonanie sekwencyjne.\n\n' +
   'ZMIENNA SRODOWISKOWA (wymagana): MV_SUPABASE_ANON.\n' +
   'Opcjonalna: MV_SUPABASE_URL. Bez MV_SUPABASE_ANON workflow celowo przerywa.\n\n' +
   'HARMONOGRAM TOROW:\n' +
   'SKALPER  — co 10 min, calodobowo. KRS -> glauko_firmy_prywatne.\n' +
-  'WATCHDOG — co 15 min, calodobowo. Obserwuje skrzynke, powiadamia wlasciciela.\n' +
-  'NADAJNIK — co 30 min, 6-16 UTC (8-18 PL). Wysylka ofert, 5 na przebieg.\n\n' +
+  'WATCHDOG — co 15 min, calodobowo. Obserwuje skrzynke, powiadamia wlasciciela.\n\n' +
+  'NADAJNIKA TU NIE MA. Wysylke GLAUKO prowadzi n8n_tick_wysylka() w workflow\n' +
+  'TICKI (D3tvXbjxvMDXdLRx) pod blokada 778811. Drugi tor wysylki obok tamtej\n' +
+  'blokady oznaczalby podwojna oferte do tego samego klienta.\n\n' +
   'GLAUKO = WATCHDOG, NIE CLOSER. Po HANDED_OFF agenci nie kontaktuja klienta\n' +
   'ponownie — kontakt prowadzi zleceniodawca. glauko_watchdog() tylko informuje.\n\n' +
   'BRAMKI BEZPIECZENSTWA zostaja po stronie RPC: glauko_hard_stop, glauko_daily_cap,\n' +
