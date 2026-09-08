@@ -1,3 +1,23 @@
+// NIEWDROZONY — ZASTAPIONY PRZEZ n8n_tick_glauko(). Zostawiony jako zapis decyzji.
+//
+// 2026-09-08, po powrocie n8n: tor GLAUKO wpiety do n8n INNA droga niz ten plik.
+// Zamiast osobnego workflow powstal wrapper public.n8n_tick_glauko(), wolany przez
+// n8n_tick_5min, czyli przez trigger "Co 5 minut" istniejacego workflow TICKI
+// (D3tvXbjxvMDXdLRx). Potwierdzone przebiegiem n8n 2026-09-08 18:25:00 UTC.
+//
+// DLACZEGO TAK, A NIE TYM PLIKIEM:
+//   - n8n juz wola kadencje co 5 minut, wiec nowy trigger byl zbedny;
+//   - osobny workflow wymagalby drugiego miejsca z kluczem anon w n8n;
+//   - mniej ruchomych czesci, ten sam wzorzec co pozostale n8n_tick_*.
+//
+// Logika jest identyczna z ta ponizej: skalper KRS co 10 min, watchdog co 15 min,
+// bez nadajnika (wysylke prowadzi n8n_tick_wysylka pod blokada 778811).
+// Wylaczone po przejeciu: crony mv_skalper_glauko_10min i glauko_watchdog_15min
+// (backup: app_config.backup_crony_glauko_20260908).
+//
+// Ten plik zostaje jako alternatywa na wypadek, gdyby tor GLAUKO mial kiedys
+// dostac wlasny workflow z wlasnym zegarem, niezalezny od TICKI.
+//
 // MV GLAUKO — caly tor GLAUKO w jednym workflow n8n.
 //
 // ZASTEPUJE dwa zadania pg_cron (patrz app_config.plan_migracji_do_n8n):
