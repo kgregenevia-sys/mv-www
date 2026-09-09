@@ -1,0 +1,31 @@
+-- 2026-09-09 GLAUKO: wiecej nowych adresow (polecenie wlasciciela "bierzemy nowe adresy")
+--
+-- STAN PRZED
+--   Skalper KRS (edge fn mv-skalper-glauko) chodzil co 10 min z ile=500.
+--   Przebieg: 500 sprawdzonych, 1-5 nowych firm, 5-11 s przy budzecie 110 s.
+--   Dobowo ok. 150 nowych adresow przy dziennym capie wysylki 300.
+--   Waskim gardlem bylo POZYSKIWANIE, nie cap i nie wysylka.
+--
+-- ZMIANA 1 - edge function mv-skalper-glauko (wersja 2)
+--   gorny limit parametru "ile": 600 -> 2000.
+--
+-- ZMIANA 2 - public.n8n_tick_glauko()
+--   wywolanie skalpera: ?ile=500 -> ?ile=2000.
+--
+-- CZEGO NIE ZMIENIONO
+--   Zadne kryterium kwalifikacji. Kazdy rekord nadal przechodzi: PKD w zakresie
+--   (41 deweloperzy, 42/43 infrastruktura, 68 nieruchomosci, 64 inwestorzy, 01 rolnictwo),
+--   adres e-mail z KRS dzial 1, zgodnosc domeny adresu z domena strony firmowej,
+--   odrzucenie freemaili, klase COMPANY_GENERIC, dedup wobec glauko_firmy_prywatne,
+--   mv_suppression i historii email_events, oraz zywy rekord MX.
+--   Podajemy skalperowi wiecej numerow KRS do sprawdzenia - nie luzujemy bramek.
+--
+-- DOWOD (ops_events, event_type = SKALPER_GLAUKO)
+--   12:01:36  sprawdzone 500   dodane 4  sekundy 7    <- przed zmiana
+--   12:04:55  sprawdzone 2000  dodane 8  sekundy 13   <- po zmianie
+--   4x wiekszy wsad, 13 s z dostepnych 110 s.
+--
+-- BACKUP / ROLLBACK
+--   app_config.backup_n8n_tick_glauko_20260909  - poprzednia definicja funkcji (?ile=500)
+--   edge function: poprzednia wersja rozni sie jedna linia -
+--     const ile = Math.min(Math.max(Number(u.searchParams.get("ile")||200), 20), 600);
